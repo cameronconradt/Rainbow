@@ -11,6 +11,8 @@ from env import Env
 from memory import ReplayMemory
 from test import test
 from tqdm import tqdm
+from wgan_div import WganDiv
+import matplotlib.pyplot as plt
 
 
 # Note that hyperparameters may originally be reported in ATARI game frames instead of agent steps
@@ -82,7 +84,8 @@ action_space = env.action_space()
 dqn = Agent(args, env)
 mem = ReplayMemory(args, args.memory_capacity)
 priority_weight_increase = (1 - args.priority_weight) / (args.T_max - args.learn_start)
-
+size = env.reset().size()
+wgan = WganDiv(size[1:])
 
 # Construct validation memory
 val_mem = ReplayMemory(args, args.evaluation_size)
@@ -90,8 +93,8 @@ T, done = 0, True
 while T < args.evaluation_size:
   if done:
     state, done = env.reset(), False
-
   next_state, _, done = env.step(np.random.randint(0, action_space))
+  wgan.train_step(state, next_state)
   val_mem.append(state, None, None, done)
   state = next_state
   T += 1
@@ -110,7 +113,14 @@ else:
 
     if T % args.replay_frequency == 0:
       dqn.reset_noise()  # Draw a new set of noisy weights
-
+    fake = wgan.gen_image(state)
+    if T % 1000 == 0:
+      fake = fake.abs_().cpu().permute(1, 2, 0).detach()
+      plt.figure()
+      plt.imshow(fake,
+                 interpolation='none')
+      plt.title('Example extracted screen')
+      plt.show()
     action = dqn.act(state)  # Choose an action greedily (with noisy weights)
     next_state, reward, done = env.step(action)  # Step
     if args.reward_clip > 0:
