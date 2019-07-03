@@ -6,7 +6,7 @@ import sys
 
 import torchvision.transforms as transforms
 from torchvision.utils import save_image
-
+import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from torch.autograd import Variable
@@ -35,8 +35,6 @@ import torch
 # print(opt)
 
 # img_shape = (opt.channels, opt.img_size, opt.img_size)
-
-
 
 
 class Generator(nn.Module):
@@ -110,6 +108,27 @@ class WganDiv:
 
         self.Tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
         self.batches_done = 0
+        self.sample_interval = 10000
+        self.g_losses = []
+        self.d_losses = []
+        self.d_losses_avg = []
+        self.g_losses_avg = []
+
+    def plot_rewards(self, losses, figure, title):
+        plt.figure(figure)
+        plt.clf()
+        rewards_t = torch.tensor(losses, dtype=torch.float)
+        plt.title(title)
+        plt.xlabel('Episodes')
+        plt.ylabel('Rewards')
+        plt.plot(rewards_t.numpy())
+        # Take 100 episode averages and plot them too
+        if len(losses) >= 100:
+            means = rewards_t.unfold(0, 100, 1).mean(1).view(-1)
+            means = torch.cat((torch.zeros(99), means))
+            plt.plot(means.numpy())
+
+        plt.pause(0.001)  # pause a bit so that plots are updated
 
     def train_step(self, imgs, next_img):
         # Configure input
@@ -120,7 +139,7 @@ class WganDiv:
         # ---------------------
 
         self.optimizer_D.zero_grad()
-
+        imgs = torch.stack(imgs)
         # Sample noise as generator input
         z = Variable(self.Tensor(np.random.normal(0, 1, (imgs.shape[0], self.latent_dim))))
 
@@ -149,7 +168,12 @@ class WganDiv:
 
         # Adversarial loss
         d_loss = -torch.mean(real_validity) + torch.mean(fake_validity) + div_gp
-
+        # self.d_losses.append(d_loss.cpu())
+        # if self.steps % 1000 == 0 and self.steps != 0:
+        #     rewards_t = torch.tensor(self.d_losses, dtype=torch.float)
+        #     self.d_losses_avg.append(rewards_t.mean(0))
+        #     self.plot_rewards(self.d_losses_avg, 2, 'Discriminator Loss')
+        #     self.d_losses = []
         d_loss.backward()
         self.optimizer_D.step()
 
@@ -168,7 +192,12 @@ class WganDiv:
             # Train on fake images
             fake_validity = self.discriminator(fake_img)
             g_loss = -torch.mean(fake_validity)
-
+            # self.g_losses.append(g_loss.cpu())
+            # if self.steps % 1000 == 0 and self.steps != 0:
+            #     rewards_t = torch.tensor(self.g_losses, dtype=torch.float)
+            #     self.g_losses_avg.append(rewards_t.mean(0))
+            #     self.plot_rewards(self.g_losses_avg, 1, 'Generator Loss')
+            #     self.g_losses = []
             g_loss.backward()
             self.optimizer_G.step()
 
@@ -177,12 +206,14 @@ class WganDiv:
             #     % (epoch, opt.n_epochs, i, len(dataloader), d_loss.item(), g_loss.item())
             # )
 
-            # if self.batches_done % opt.sample_interval == 0:
-            #     save_image(fake_img.data[:25], "images/%d.png" % batches_done, nrow=5, normalize=True)
+            if self.steps % self.sample_interval == 0:
+                save_image(fake_img.data, "images/%d.png" % self.steps, nrow=5, normalize=True)
+                save_image(next_img.data,"images/%d_next.png" % self.steps, nrow=5, normalize=True)
             #
             # self.batches_done += opt.n_critic
 
         self.steps += 1
+        return fake_img
 
     def gen_image(self, imgs):
         z = Variable(self.Tensor(np.random.normal(0, 1, (imgs.shape[0], self.latent_dim))))

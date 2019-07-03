@@ -93,8 +93,12 @@ T, done = 0, True
 while T < args.evaluation_size:
   if done:
     state, done = env.reset(), False
+  state_buffer = []
+  for i in range(4):
+    next_state, _, done = env.step(np.random.randint(0, action_space))
+    state_buffer.append(next_state)
   next_state, _, done = env.step(np.random.randint(0, action_space))
-  wgan.train_step(state, next_state)
+  fake = wgan.train_step(state_buffer, next_state)
   val_mem.append(state, None, None, done)
   state = next_state
   T += 1
@@ -113,19 +117,21 @@ else:
 
     if T % args.replay_frequency == 0:
       dqn.reset_noise()  # Draw a new set of noisy weights
-    fake = wgan.gen_image(state)
-    if T % 1000 == 0:
-      fake = fake.abs_().cpu().permute(1, 2, 0).detach()
-      plt.figure()
-      plt.imshow(fake,
-                 interpolation='none')
-      plt.title('Example extracted screen')
-      plt.show()
+
     action = dqn.act(state)  # Choose an action greedily (with noisy weights)
-    next_state, reward, done = env.step(action)  # Step
+    state_buffer = []
+    global_reward = 0
+    for i in range(4):
+        next_state, reward, done = env.step(action)  # Step
+        global_reward += reward
+        state_buffer.append(next_state)
+        T += 1
+    # next_state, reward, done = env.step(action)  # Step
+    fake = wgan.train_step(state_buffer, next_state)
+    next_state = fake
     if args.reward_clip > 0:
-      reward = max(min(reward, args.reward_clip), -args.reward_clip)  # Clip rewards
-    mem.append(state, action, reward, done)  # Append transition to memory
+      global_reward = max(min(global_reward, args.reward_clip), -args.reward_clip)  # Clip rewards
+    mem.append(state, action, global_reward, done)  # Append transition to memory
 
     # Train and test
     if T >= args.learn_start:
@@ -145,5 +151,7 @@ else:
         dqn.update_target_net()
 
     state = next_state
-
+dqn.eval()  # Set DQN (online network) to evaluation mode
+avg_reward, avg_Q = test(args, T, dqn, val_mem, metrics, results_dir)  # Test
+log('T = ' + str(T) + ' / ' + str(args.T_max) + ' | Avg. reward: ' + str(avg_reward) + ' | Avg. Q: ' + str(avg_Q))
 env.close()
